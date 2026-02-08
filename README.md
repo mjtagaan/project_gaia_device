@@ -33,18 +33,7 @@ Gaia translates raw sensor data into **7 emotional states**. The firmware uses a
 * **Dark (`- _ -`):** Light < 100 Lux. (Priority 3)
 * **Bright (`= _ =`):** Light > 2000 Lux. (Priority 3)
 
-### 2. ⚡ Bypass Mode (Dev/Demo Mode)
-
-**Crucial for Demonstrations & Debugging.**
-The firmware includes a `BYPASS_SENSORS` flag.
-
-* **`false` (Default):** The device reads physical sensors and uploads data to Firebase.
-* **`true` (Demo Mode):** The device **ignores physical sensors** and instead **downloads** values from Firebase.
-* *Use Case:* You can manually change the values in the Firebase Console (e.g., set `soil_moisture` to 10) to force the OLED to show the "Thirsty" face instantly, without needing to physically dry out the plant.
-
-
-
-### 3. Firebase Synchronization
+### 2. Firebase Synchronization
 
 The device acts as a real-time node.
 
