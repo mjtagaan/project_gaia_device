@@ -8,12 +8,6 @@
 #include <Adafruit_SSD1306.h>
 #include "bitmaps.h"
 
-// ================= BYPASS MODE =================
-// Set to true to skip sensors and read from Firebase only (OLED test mode)
-// Set to false for normal operation with sensors
-#define BYPASS_SENSORS false
-// ================================================
-
 // ================= 1. USER CONFIGURATION =================
 // WIFI SETTINGS
 #define WIFI_SSID "<Your WiFi SSID>"
@@ -337,7 +331,6 @@ void setup() {
     display.display();
   }
   
-#if !BYPASS_SENSORS
   // Initialize BH1750
   if (lightMeter.begin(BH1750::CONTINUOUS_HIGH_RES_MODE)) {
     Serial.println("✓ BH1750 initialized (ADDR->GND)");
@@ -350,9 +343,6 @@ void setup() {
   dht.begin();
   pinMode(MOISTURE_PIN, INPUT);
   Serial.println("✓ DHT22 and Moisture sensors initialized");
-#else
-  Serial.println(">>> BYPASS MODE: Sensors disabled, reading from Firebase <<<");
-#endif
   Serial.println();
 
   // Start Wi-Fi
@@ -482,40 +472,6 @@ void loop() {
   if (Firebase.ready() && signupOK && (millis() - sendDataPrevMillis > 1000 || sendDataPrevMillis == 0)) {
     sendDataPrevMillis = millis();
 
-#if BYPASS_SENSORS
-    // ============ BYPASS MODE: Read FROM Firebase ============
-    float temp = 25.0;      // defaults
-    float humid = 50.0;
-    int moistPercent = 50;
-    float lux = 500.0;
-
-    Serial.print("Reading from Firebase... ");
-    
-    if (Firebase.RTDB.getJSON(&fbdo, "/plants/gaia_01")) {
-      FirebaseJson &json = fbdo.jsonObject();
-      FirebaseJsonData jsonData;
-      
-      if (json.get(jsonData, "temperature")) temp = jsonData.floatValue;
-      if (json.get(jsonData, "soil_moisture")) moistPercent = jsonData.intValue;
-      if (json.get(jsonData, "light_intensity")) lux = jsonData.floatValue;
-      if (json.get(jsonData, "humidity")) humid = jsonData.floatValue;
-      
-      Serial.println("OK");
-      Serial.print("  Temp: "); Serial.print(temp);
-      Serial.print("C | Humid: "); Serial.print(humid);
-      Serial.print("% | Soil: "); Serial.print(moistPercent);
-      Serial.print("% | Light: "); Serial.print(lux);
-      Serial.println(" lux");
-    } else {
-      Serial.print("FAILED: ");
-      Serial.println(fbdo.errorReason());
-    }
-
-    // Update display with Firebase values
-    updateScreen(temp, moistPercent, lux);
-
-#else
-    // ============ NORMAL MODE: Read sensors, upload to Firebase ============
     // --- STEP A: READ SENSORS ---
     float temp = dht.readTemperature();
     float humid = dht.readHumidity();
@@ -557,6 +513,5 @@ void loop() {
       Serial.print("FAILED: ");
       Serial.println(fbdo.errorReason());
     }
-#endif
   }
 }
