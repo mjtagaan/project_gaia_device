@@ -31,5 +31,7 @@ const unsigned char wifi_disconnected_bits[] PROGMEM = {
 #define FACE_COLD        4
 #define FACE_DARK        5
 #define FACE_BRIGHT      6
+#define FACE_HUMID       7
+#define FACE_DRY_AIR     8
 
 #endif

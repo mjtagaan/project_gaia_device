@@ -48,6 +48,80 @@ FirebaseConfig config;
 unsigned long sendDataPrevMillis = 0;
 bool signupOK = false;
 
+// ================= 2.0 PLANT THRESHOLDS (Dynamic from Firebase) =================
+// These defaults match common houseplants. The Flutter app writes species-specific
+// values to Firebase, and the ESP32 pulls them periodically so the OLED faces
+// react according to the actual plant's needs.
+struct PlantThresholds {
+  // Soil moisture (%)
+  int   moistureLow;      // Below this → FACE_THIRSTY
+  int   moistureHigh;     // Above this → FACE_OVERWATERED
+  // Temperature (°C)
+  float tempHigh;         // Above this → FACE_HOT
+  float tempLow;          // Below this → FACE_COLD
+  // Light (lux)
+  float luxLow;           // Below this → FACE_DARK
+  float luxHigh;          // Above this → FACE_BRIGHT
+  // Humidity (%)
+  float humidityHigh;     // Above this → FACE_HUMID
+  float humidityLow;      // Below this → FACE_DRY_AIR
+  // Species info
+  String speciesName;     // e.g. "Rose", "Cactus", "Fern"
+};
+
+// Sensible defaults (used until Firebase supplies species-specific values)
+PlantThresholds thresholds = {
+  /* moistureLow  */  30,
+  /* moistureHigh */  85,
+  /* tempHigh     */  30.0,
+  /* tempLow      */  15.0,
+  /* luxLow       */  100.0,
+  /* luxHigh      */  2000.0,
+  /* humidityHigh */  80.0,
+  /* humidityLow  */  30.0,
+  /* speciesName  */  "Unknown"
+};
+
+unsigned long lastThresholdFetch = 0;
+const unsigned long THRESHOLD_FETCH_INTERVAL = 30000; // Sync every 30 seconds
+
+// ================= 2.0.1 FETCH THRESHOLDS FROM FIREBASE =================
+// Reads species-specific thresholds written by the Flutter app.
+// Expected Firebase path: /plants/gaia_01/thresholds/
+// The Flutter app should write keys: moisture_low, moisture_high,
+// temp_high, temp_low, lux_low, lux_high, humidity_high, humidity_low, species
+void fetchThresholdsFromFirebase() {
+  if (!Firebase.ready() || !signupOK) return;
+
+  Serial.println("[Thresholds] Fetching from Firebase...");
+
+  if (Firebase.RTDB.getJSON(&fbdo, "/plants/gaia_01/thresholds")) {
+    FirebaseJson &json = fbdo.jsonData();
+    FirebaseJsonData jsonData;
+
+    if (json.get(jsonData, "moisture_low"))    thresholds.moistureLow  = jsonData.intValue;
+    if (json.get(jsonData, "moisture_high"))   thresholds.moistureHigh = jsonData.intValue;
+    if (json.get(jsonData, "temp_high"))       thresholds.tempHigh     = jsonData.floatValue;
+    if (json.get(jsonData, "temp_low"))        thresholds.tempLow      = jsonData.floatValue;
+    if (json.get(jsonData, "lux_low"))         thresholds.luxLow       = jsonData.floatValue;
+    if (json.get(jsonData, "lux_high"))        thresholds.luxHigh      = jsonData.floatValue;
+    if (json.get(jsonData, "humidity_high"))   thresholds.humidityHigh = jsonData.floatValue;
+    if (json.get(jsonData, "humidity_low"))    thresholds.humidityLow  = jsonData.floatValue;
+    if (json.get(jsonData, "species"))         thresholds.speciesName  = jsonData.stringValue;
+
+    Serial.println("[Thresholds] Updated for species: " + thresholds.speciesName);
+    Serial.printf("  Moisture: %d-%d%% | Temp: %.1f-%.1f°C | Lux: %.0f-%.0f | Humid: %.0f-%.0f%%\n",
+      thresholds.moistureLow, thresholds.moistureHigh,
+      thresholds.tempLow, thresholds.tempHigh,
+      thresholds.luxLow, thresholds.luxHigh,
+      thresholds.humidityLow, thresholds.humidityHigh);
+  } else {
+    Serial.print("[Thresholds] Fetch failed: ");
+    Serial.println(fbdo.errorReason());
+    Serial.println("[Thresholds] Using defaults/last known values.");
+  }
+}
+
 // ================= 2.1 DISPLAY LOGIC =================
 void drawStatusBar(int batteryPercent) {
   // 1. Divider Line
@@ -60,7 +134,21 @@ void drawStatusBar(int batteryPercent) {
     display.drawBitmap(0, 0, wifi_disconnected_bits, ICON_WIDTH, ICON_HEIGHT, SSD1306_WHITE);
   }
 
-  // 3. Battery Icon (Right)
+  // 3. Species Name (Center) - Only show if known
+  if (thresholds.speciesName.length() > 0 && thresholds.speciesName != "Unknown") {
+    // Truncate long names to fit between icons
+    String displayName = thresholds.speciesName;
+    if (displayName.length() > 14) displayName = displayName.substring(0, 13) + ".";
+    int16_t x1, y1;
+    uint16_t w, h;
+    display.setTextSize(1);
+    display.setTextColor(SSD1306_WHITE);
+    display.getTextBounds(displayName, 0, 0, &x1, &y1, &w, &h);
+    display.setCursor((SCREEN_WIDTH - w) / 2, 1);
+    display.print(displayName);
+  }
+
+  // 4. Battery Icon (Right)
   // Battery Outline: 110, 1 -> 16x8
   display.drawRect(110, 1, 16, 8, SSD1306_WHITE); 
   // Positive Terminal (Bump)
@@ -237,10 +325,47 @@ void drawFace(int faceType) {
       display.drawLine(118, 12, 118, 16, SSD1306_WHITE);
       break;
     }
+
+    case FACE_HUMID: {
+      // Droopy half-closed eyes (heavy moisture)
+      display.fillRect(34, 28, 20, 4, SSD1306_WHITE);   // Left eye slit
+      display.drawLine(34, 28, 34, 22, SSD1306_WHITE);  // Left eyelid
+      display.drawLine(54, 28, 54, 22, SSD1306_WHITE);
+      display.drawLine(34, 22, 54, 22, SSD1306_WHITE);
+      display.fillRect(74, 28, 20, 4, SSD1306_WHITE);   // Right eye slit
+      display.drawLine(74, 28, 74, 22, SSD1306_WHITE);
+      display.drawLine(94, 28, 94, 22, SSD1306_WHITE);
+      display.drawLine(74, 22, 94, 22, SSD1306_WHITE);
+      // Flat uneasy mouth
+      display.fillRect(44, 50, 40, 3, SSD1306_WHITE);
+      // Droplets around face
+      display.fillCircle(18, 20, 2, SSD1306_WHITE);
+      display.fillCircle(110, 24, 2, SSD1306_WHITE);
+      display.fillCircle(24, 42, 2, SSD1306_WHITE);
+      display.fillCircle(104, 46, 2, SSD1306_WHITE);
+      break;
+    }
+
+    case FACE_DRY_AIR: {
+      // Squished/cracked eyes (parched)
+      display.drawCircle(44, 28, 8, SSD1306_WHITE);
+      display.drawCircle(84, 28, 8, SSD1306_WHITE);
+      display.fillCircle(44, 28, 3, SSD1306_WHITE);
+      display.fillCircle(84, 28, 3, SSD1306_WHITE);
+      // Small O-shaped mouth (gasping)
+      display.drawCircle(64, 52, 6, SSD1306_WHITE);
+      display.drawCircle(64, 52, 5, SSD1306_WHITE);
+      // Crack lines on cheeks
+      display.drawLine(18, 36, 28, 32, SSD1306_WHITE);
+      display.drawLine(28, 32, 22, 28, SSD1306_WHITE);
+      display.drawLine(100, 36, 110, 32, SSD1306_WHITE);
+      display.drawLine(110, 32, 104, 28, SSD1306_WHITE);
+      break;
+    }
   }
 }
 
-void updateScreen(float temp, int moisture, float lux) {
+void updateScreen(float temp, int moisture, float humid, float lux) {
   display.clearDisplay();
   
   // Update Battery Placeholder
@@ -249,31 +374,38 @@ void updateScreen(float temp, int moisture, float lux) {
   // Draw Status Bar
   drawStatusBar(batteryPercent);
 
-  // Determine Face Priority
-  int faceType = FACE_HAPPY; // Default
+  // ---- Determine Face using DYNAMIC thresholds from Firebase ----
+  int faceType = FACE_HAPPY; // Default — all vitals are within range!
 
-  // 1. CRITICAL: Moisture (Thirsty < 30% | Overwatered > 85%)
-  if (moisture < 30) {
+  // 1. CRITICAL: Soil Moisture
+  if (moisture < thresholds.moistureLow) {
     faceType = FACE_THIRSTY;
   } 
-  else if (moisture > 85) {
+  else if (moisture > thresholds.moistureHigh) {
     faceType = FACE_OVERWATERED;
   }
-  // 2. WARNING: Temperature (Hot > 30C | Cold < 15C)
-  else if (temp > 30.0) {
+  // 2. WARNING: Temperature
+  else if (temp > thresholds.tempHigh) {
     faceType = FACE_HOT;
   }
-  else if (temp < 15.0) {
+  else if (temp < thresholds.tempLow) {
     faceType = FACE_COLD;
   }
-  // 3. MINOR: Light (Dark < 100 | Bright > 2000)
-  else if (lux < 100) {
+  // 3. WARNING: Humidity
+  else if (humid > thresholds.humidityHigh) {
+    faceType = FACE_HUMID;
+  }
+  else if (humid < thresholds.humidityLow) {
+    faceType = FACE_DRY_AIR;
+  }
+  // 4. MINOR: Light
+  else if (lux < thresholds.luxLow) {
     faceType = FACE_DARK;
   }
-  else if (lux > 2000) {
+  else if (lux > thresholds.luxHigh) {
     faceType = FACE_BRIGHT;
   }
-  // Else stays Happy
+  // Else stays Happy — the plant is thriving!
 
   // Draw face using primitives (guaranteed pixel-perfect rendering)
   drawFace(faceType);
@@ -461,8 +593,14 @@ void setup() {
 
   Firebase.begin(&config, &auth);
   Firebase.reconnectWiFi(true);
+
+  // Fetch plant thresholds on startup
+  delay(2000); // Give Firebase a moment to connect
+  fetchThresholdsFromFirebase();
   
   Serial.println("\n========== SYSTEM READY ==========");
+  Serial.print("Plant Species: ");
+  Serial.println(thresholds.speciesName);
   Serial.println();
 }
 
@@ -488,8 +626,14 @@ void loop() {
       return;
     }
 
+    // --- SYNC THRESHOLDS FROM FIREBASE (every 30s) ---
+    if (millis() - lastThresholdFetch > THRESHOLD_FETCH_INTERVAL) {
+      lastThresholdFetch = millis();
+      fetchThresholdsFromFirebase();
+    }
+
     // --- DISPLAY ON OLED ---
-    updateScreen(temp, moistPercent, lux);
+    updateScreen(temp, moistPercent, humid, lux);
 
     // --- STEP B: UPLOAD TO FIREBASE ---
     Serial.print("Sending to Firebase... ");
